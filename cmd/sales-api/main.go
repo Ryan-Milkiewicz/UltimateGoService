@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -10,10 +11,27 @@ import (
 	"time"
 
 	"garagesale/cmd/sales-api/internal/handlers"
+	"garagesale/internal/platform/conf"
 	"garagesale/internal/platform/database"
 )
 
 func main() {
+
+	var cfg struct {
+		Web struct {
+			Address         string        `conf:"default:localhost:8000"`
+			ReadTimeout     time.Duration `conf:"default:5s"`
+			WriteTimeout    time.Duration `conf:"default:5s"`
+			ShutdownTimeout time.Duration `conf:"default:5s"`
+		}
+		DB struct {
+			User       string `conf:"default:postgres"`
+			Password   string `conf:"default:postgres,noprint"`
+			Host       string `conf:"default:localhost"`
+			Name       string `conf:"default:postgres"`
+			DisableTLS bool   `conf:"default:false"`
+		}
+	}
 
 	// ============================================================================
 	// App Starting
@@ -22,9 +40,36 @@ func main() {
 	defer log.Println("main : Compleated")
 
 	// ============================================================================
+	// Get Configurations
+
+	if err := conf.Parse(os.Args[1:], "SALES", &cfg); err != nil {
+		if err == conf.ErrHelpWanted {
+			usage, err := conf.Usage("SALES", &cfg)
+			if err != nil {
+				log.Fatalf("error: generating config usage : %v", err)
+			}
+			fmt.Println(usage)
+			return
+		}
+		log.Fatalf("error: parsing config: %s", err)
+	}
+
+	out, err := conf.String(&cfg)
+	if err != nil {
+		log.Fatalf("error : generating config for output : %v", err)
+	}
+	log.Printf("main : Config :\n%v\n", out)
+
+	// ============================================================================
 	// Setup Dependencies
 
-	db, err := database.Open()
+	db, err := database.Open(database.Config{
+		Host:       cfg.DB.Host,
+		User:       cfg.DB.User,
+		Password:   cfg.DB.Password,
+		Name:       cfg.DB.Name,
+		DisableTLS: cfg.DB.DisableTLS,
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -36,10 +81,10 @@ func main() {
 	ps := handlers.Product{DB: db}
 
 	api := http.Server{
-		Addr:         "localhost:8000",
+		Addr:         cfg.Web.Address,
 		Handler:      http.HandlerFunc(ps.List),
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
+		ReadTimeout:  cfg.Web.ReadTimeout,
+		WriteTimeout: cfg.Web.WriteTimeout,
 	}
 
 	// Make a channel to listen for errors coming from the listener. Use a
@@ -62,13 +107,12 @@ func main() {
 	case <-shutdown:
 		log.Println("main : Start shutdown")
 
-		const timeout = 5 * time.Second
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.Web.ShutdownTimeout)
 		defer cancel()
 
 		err := api.Shutdown(ctx)
 		if err != nil {
-			log.Printf("main : Graceful shutdown did not compleate in %v : %v", timeout, err)
+			log.Printf("main : Graceful shutdown did not compleate in %v : %v", cfg.Web.ShutdownTimeout, err)
 			err = api.Close()
 		}
 

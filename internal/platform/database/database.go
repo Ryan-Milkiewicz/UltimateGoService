@@ -7,17 +7,30 @@ import (
 	_ "github.com/lib/pq" //Register postgres database/sql driver.
 )
 
+// Config required to open a database connection
+type Config struct {
+	Host       string
+	Name       string
+	User       string
+	Password   string
+	DisableTLS bool
+}
+
 // Open knows how to open a database connection
-func Open() (*sqlx.DB, error) {
+func Open(cfg Config) (*sqlx.DB, error) {
 	q := url.Values{}
-	q.Set("sslmode", "disable")
+
+	q.Set("sslmode", "require")
+	if cfg.DisableTLS {
+		q.Set("sslmode", "disable")
+	}
 	q.Set("timezone", "utc")
 
 	u := url.URL{
 		Scheme:   "postgres",
-		User:     url.UserPassword("postgres", "postgres"),
-		Host:     "localhost",
-		Path:     "postgres",
+		User:     url.UserPassword(cfg.User, cfg.Password),
+		Host:     cfg.Host,
+		Path:     cfg.Name,
 		RawQuery: q.Encode(),
 	}
 
